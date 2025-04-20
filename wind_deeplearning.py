@@ -46,7 +46,7 @@ def batch_readncfiles(read_path: str):
     :param read_path:
     :return:
     """
-    df_nc = None
+    df_nc: xr.Dataset = None
     nc_path = pathlib.Path(read_path)
     for file in nc_path.iterdir():
         # for file in 'GRAPES_2024010100_240h_UV.nc','GRAPES_2024010112_240h_UV.nc':
@@ -65,7 +65,7 @@ def batch_readncfiles(read_path: str):
 
 
 def main():
-    read_path: str = r'Z:\风场数据\GRAPES\2024'
+    read_path: str = r'Z:\WIND\GRAPES\2024'
     batch_readncfiles(read_path)
     pass
 
