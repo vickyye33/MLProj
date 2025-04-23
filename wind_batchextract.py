@@ -116,12 +116,59 @@ def simulate_forcast_data():
     pass
 
 
+def batch_get_realdata(file_full_path: str, split_hours=72, issue_hours_steps: int = 12):
+    """
+        TODO:[-] 25-04-23 生成实况训练数据集
+        从指定文件批量获取时间数据并以dataframe的形式返回
+    :param file_full_path:
+    :return:
+    """
+
+    """
+        eg: csv文件样例:
+                        time	longitude	latitude	WS	YBG
+                        202401010000
+                        YYYYMMDDHHmm
+    """
+    list_series = []
+    if pathlib.Path(file_full_path).exists():
+        # ds: xr.Dataset = xr.open_dataset(file_full_path)
+        df: pd.DataFrame = pd.read_csv(file_full_path)
+        """读取指定路径的浮标处理后的一年的数据"""
+        # 通过起止时间找到对应的index，然后每次的发布时间间隔步长为12h
+
+        # step1: 生成2024年一年的时间步长为1hour的时间索引集合
+        start_time = '2024-01-01 00:00:00'
+        end_time = '2024-12-31 23:00:00'
+        time_series = pd.date_range(start=start_time, end=end_time, freq='H')
+
+        # 将time列的内容从int64 => str
+        df['time'] = df['time'].astype(str)
+        df['time'] = pd.to_datetime(df['time'], format='%Y%m%d%H%M')
+        # step2: 将 time列设置为index，并将index替换为标准时间集合
+        df.set_index('time', inplace=True)
+        df_reindexed = df.reindex(time_series)
+        df_reindexed.index.name = 'time'
+
+        # step3: 生成12小时为间隔的时间数组
+        freq_str: str = f'{issue_hours_steps}H'
+        issue_dt_series = pd.date_range(start=start_time, end=end_time, freq=freq_str)
+
+        for temp_time in issue_dt_series:
+            temp_index: int = df_reindexed.index.get_loc(temp_time)
+            val_series = df_reindexed[temp_index:temp_index + split_hours]
+            list_series.append(val_series)
+    return list_series
+
+
 def traning():
     # 假设我们有以下输入数据
     # u_data 和 v_data 是形状为 (730, 72, 3) 的风场数据
     # ybg_data 是形状为 (730, 3) 的浮标数据
     u_data = np.random.rand(730, 72, 3)  # 730个发布时次
     v_data = np.random.rand(730, 72, 3)
+    # 此处应该修改为 365*2 个发布时间，对应的未来72小市场的实际观测值，3个坐标位置。
+    # 形状修改为 (730,72,3)
     ybg_data = np.random.rand(730, 3)
 
     # 将u和v数据合并为输入特征
@@ -168,13 +215,16 @@ def main():
     out_put_file_path: str = str(pathlib.Path(out_put_path) / 'GRAPES_2024_24')
     lat: float = 39.5003
     lng: float = 120.59533
+
+    read_file_full_path: str = r'G:\05DATA\01TRAINING_DATA\FUB\MF01001\2024_local.csv'
+    list_series = batch_get_realdata(read_file_full_path)
     # 暂时注释掉批量生成file
     # for index in range(11):
     #     temp_month = index + 1
     #     df = batch_readncfiles(read_path, lat, lng, temp_month)
     #     df.to_csv(f'out_put_file_path_{temp_month}.csv')
     # 生成测试数据
-    simulate_forcast_data()
+    # simulate_forcast_data()
     pass
 
 
