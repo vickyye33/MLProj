@@ -5,7 +5,11 @@ import arrow
 import numpy as np
 import pandas as pd
 import tensorflow as tf
+from keras import Sequential
+from keras.src.layers import LSTM, Dropout, Dense
+from pandas import DatetimeIndex
 from sklearn.model_selection import train_test_split
+from sklearn.metrics import mean_squared_error
 import os
 import pathlib
 import xml.etree.ElementTree as ET
@@ -13,9 +17,11 @@ import xarray as xr
 import codecs
 import datetime
 
-
 # 先从海浪数据中提取出经纬度，时间，风，海浪高度
 # 解析单个文件，并存于字典内
+from sklearn.preprocessing import StandardScaler
+
+
 def batch_readxmlfiles(read_file: str):
     parser = ET.XMLParser(encoding="iso-8859-5")
     # print(read_file)
@@ -244,6 +250,87 @@ def batch_get_realdata(file_full_path: str, split_hours=72, issue_hours_steps: i
     return df
 
 
+def get_test_array(test_read_path: str, training_read_path: str, issue_times_index: DatetimeIndex):
+    """
+        分别读取测试数据集以及实况数据集并进行训练
+    :param test_read_path:
+    :param training_read_path:
+    :return:
+    """
+    if pathlib.Path(test_read_path).exists() and pathlib.Path(training_read_path).exists():
+        df_test: pd.DataFrame = pd.read_csv(test_read_path)
+        u_data_dict = {}
+        v_data_dict = {}
+        # 读取的预报风场——测试训练集 在 df 中是通过 xxx_u与 xxx_v 的形式进行存储
+        # TODO:[-] 25-04-28 u 与 v 每个共613组预报数据
+        for col_name in df_test.columns:
+            try:
+                col_vector = df_test[col_name]
+                # yyyymmddhhss
+                dt_temp_str: str = col_name.split('_')[0]
+                # u or v
+                var_temp_str: str = col_name.split('_')[1]
+                if var_temp_str == 'u':
+                    # u_data_dict[dt_temp_str] = col_vector.tolist()
+                    u_data_dict[dt_temp_str] = col_vector
+                elif var_temp_str == 'v':
+                    # v_data_dict[dt_temp_str] = col_vector.tolist()
+                    v_data_dict[dt_temp_str] = col_vector
+                print(f'当前列:{col_name}处理成功~')
+            except Exception as e:
+                print(f'当前列:{col_name}处理错误!')
+        # # step2: 将字典统一转换为二维数组
+        # result_u_array = [val for key, val in u_data_dict.items()]
+        # result_v_array = [val for key, val in v_data_dict.items()]
+        # return [result_u_array, result_v_array]
+        df_u = pd.DataFrame.from_dict(u_data_dict)
+        df_v = pd.DataFrame.from_dict(v_data_dict)
+        # 将时间字符串=>datetime
+        df_u.columns = pd.to_datetime(df_u.columns)
+        df_v.columns = pd.to_datetime(df_v.columns)
+        # TODO:[*] 25-04-29
+        # 需要根据起止时间及时间步长，生成对应的时间索引，并将该时间索引作为标准索引
+        # 注意： reindex 后会返回一个新的 DataFrame，并不会修改原始df
+        df_u = df_u.reindex(columns=issue_times_index)
+        df_v = df_v.reindex(columns=issue_times_index)
+        return df_u, df_v
+        # pass
+    return None
+
+
+def traning_ws(test_read_path: str, training_read_path: str):
+    """
+        分别读取测试数据集以及实况数据集并进行训练
+    :param test_read_path:
+    :param training_read_path:
+    :return:
+    """
+    if pathlib.Path(test_read_path).exists() and pathlib.Path(training_read_path).exists():
+        df_test: pd.DataFrame = pd.read_csv(test_read_path)
+        u_data_dict = {}
+        v_data_dict = {}
+        # 读取的预报风场——测试训练集 在 df 中是通过 xxx_u与 xxx_v 的形式进行存储
+        # TODO:[-] 25-04-28 u 与 v 每个共613组预报数据
+        for col_name in df_test.columns:
+            try:
+                col_vector = df_test[col_name]
+                # yyyymmddhhss
+                dt_temp_str: str = col_name.split('_')[0]
+                # u or v
+                var_temp_str: str = col_name.split('_')[1]
+                if var_temp_str == 'u':
+                    u_data_dict[dt_temp_str] = col_vector.tolist()
+                elif var_temp_str == 'v':
+                    v_data_dict[dt_temp_str] = col_vector.tolist()
+                print(f'当前列:{col_name}处理成功~')
+            except Exception as e:
+                print(f'当前列:{col_name}处理错误!')
+        # step2: 将字典统一转换为二维数组
+        result_u_array = [val for key, val in u_data_dict.items()]
+        result_v_array = [val for key, val in v_data_dict.items()]
+        pass
+
+
 def traning():
     # 假设我们有以下输入数据
     # u_data 和 v_data 是形状为 (730, 72, 3) 的风场数据
@@ -292,6 +379,90 @@ def traning():
     print(f"Predicted YBG values: {ybg_prediction}")
 
 
+def train_data_preparation(u_data: pd.DataFrame, v_data: pd.DataFrame, ws_data: pd.DataFrame):
+    # 合并 u 和 v 数据
+    # u_data :(25,613),
+    # ws_data:(72,732)
+    # TODO:[*] 25-04-29 从以上数据可知u 与 ws 的数据集形状不同，需要标准化
+    # ws是正常的 366*2=732
+    # u 是有缺失的
+    # shape:(25,1226)
+    # shape:(25, 1464) u|v 单独为 (25,732)
+    features = pd.concat([u_data, v_data], axis=1)
+
+    # TODO:[*] 25-04-29 此处的意义是什么?
+    # 标准化
+    scaler = StandardScaler()
+    # shape:(25, 1464)
+    features_scaled = scaler.fit_transform(features)
+
+    # 创建时间序列数据
+    def create_dataset(features, targets, time_step=1):
+        X, y = [], []
+        for i in range(len(features) - time_step):
+            X.append(features[i:(i + time_step), :])
+            y.append(targets[i + time_step])
+        return np.array(X), np.array(y)
+
+    time_step = 25  # 例如，使用过去25小时的数据
+
+    """
+        X 是一个三维数组，形状为 (样本数, 时间步, 特征数)，其中：
+        样本数：表示用于训练模型的时间序列样本的数量。
+        时间步：表示每个样本中包含的历史时间点的数量（在本例中为 25，表示过去 25 小时的风场数据）。
+        特征数：表示每个时间步的特征数量。在你的情况下，u_data 和 v_data 合并后，每个时间步的特征数量为 2（即每个时间点的 u 和 v 分量）。
+        示例
+        如果 u_data 和 v_data 各有 100 个时间点，且我们设置时间步为 25，则：        
+        X 的形状为 (76, 25, 2)，因为每个样本需要 25 个时间步的数据，最后一个样本可以从第 76 个时间点开始。
+    """
+
+    """
+        y 是一个一维数组，形状为 (样本数,)，表示每个样本对应的目标值。在这个案例中，y 包含的是对应时间步之后 25 小时的风速（ws）观测值。
+        示例
+        继续以上的例子，y 将包含从第 26 到第 100 个时间点的 ws 值，因此：        
+        y 的形状为 (76,)，与 X 的样本数相对应。
+    """
+    # TODO:[*] 25-04-29 X 与 y的 shape均为0
+    X, y = create_dataset(features_scaled, ws_data.values, time_step)
+    return X, y
+
+
+def train_instruct_model(X, y):
+    # 定义模型
+    model = Sequential()
+    # IndexError: tuple index out of range
+    model.add(LSTM(units=50, return_sequences=True, input_shape=(X.shape[1], X.shape[2])))
+    model.add(Dropout(0.2))
+    model.add(LSTM(units=50))
+    model.add(Dropout(0.2))
+    model.add(Dense(units=1))  # 输出层
+    # 编译模型
+    model.compile(optimizer='adam', loss='mean_squared_error')
+    return model
+
+
+def train_fit_model(model, X, y):
+    # 拆分数据集为训练集和测试集
+    train_size = int(len(X) * 0.8)
+    X_train, X_test = X[:train_size], X[train_size:]
+    y_train, y_test = y[:train_size], y[train_size:]
+    # 训练模型
+    model.fit(X_train, y_train, epochs=100, batch_size=32, validation_data=(X_test, y_test))
+    return model, X_test, y_test
+
+
+def train_model_evaluate(model, X_test, y_test):
+    # 进行预测
+    predictions = model.predict(X_test)
+
+    # 反标准化（如果需要）
+    # predictions = scaler.inverse_transform(predictions)
+
+    # 评估模型
+    mse = mean_squared_error(y_test, predictions)
+    print(f'Mean Squared Error: {mse}')
+
+
 def merge_dataframe(read_path: str) -> Optional[pd.DataFrame]:
     """
         读取指定路径，遍历该路径下的所有文件，将读取的dataframe横向拼接
@@ -329,14 +500,29 @@ def main():
     #     batch_readncfiles_byyears(read_path, lat, lng, 2024, temp_month)
 
     # step2:将上面step1处理的按月保存的72小时浮标站位的时序数据合并为一整年的数据
-    merge_df = merge_dataframe(r'G:\05DATA\01TRAINING_DATA\WIND')
-    merge_df.to_csv(r'G:\05DATA\01TRAINING_DATA\WIND\merge.csv')
+    # merge_df = merge_dataframe(r'G:\05DATA\01TRAINING_DATA\WIND')
+    # merge_df.to_csv(r'G:\05DATA\01TRAINING_DATA\WIND\merge.csv')
 
+    # TODO:[*] 25-04-29 根据起止时间，时间步长为12h，生成发布时间index
+    start_time = '2024-01-01 00:00:00'
+    end_time = '2024-12-31 23:00:00'
+    issue_times_index = pd.date_range(start=start_time, end=end_time, freq='12h')
+
+    # step3: 提取 test 与 training data 开始训练
+    # traning_ws(r'G:\05DATA\01TRAINING_DATA\WIND\merge.csv', r'G:\05DATA\01TRAINING_DATA\FUB\MF01001\2024_local.csv')
+    df_u, df_v = get_test_array(r'G:\05DATA\01TRAINING_DATA\WIND\merge.csv',
+                                r'G:\05DATA\01TRAINING_DATA\FUB\MF01001\2024_local.csv', issue_times_index)
     read_file_full_path: str = r'G:\05DATA\01TRAINING_DATA\FUB\MF01001\2024_local.csv'
     # step1: 生成一年的 365*2 =730 个 ws,ybg -> 只取 ws
-    df = batch_get_realdata(read_file_full_path)
+    df_ws = batch_get_realdata(read_file_full_path)
     # step2: 只提取 ws
-    df.to_csv(out_put_file_path)
+    # df_ws.to_csv(out_put_file_path)
+    X, y = train_data_preparation(df_u, df_v, df_ws)
+    model = train_instruct_model(X, y)
+    model, X_test, y_test = train_fit_model(model, X, y)
+    train_model_evaluate(model, X_test, y_test)
+
+    # TODO:[-] 25-04-28 以上部分分别处理并获取了 test 的 u & v dataframe ; 以及 ws 的 dataframe
 
     # 暂时注释掉批量生成file
     # for index in range(11):
