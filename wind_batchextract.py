@@ -379,7 +379,7 @@ def traning():
     print(f"Predicted YBG values: {ybg_prediction}")
 
 
-def train_data_preparation(u_data: pd.DataFrame, v_data: pd.DataFrame, ws_data: pd.DataFrame):
+def train_data_preparation(u_data: pd.DataFrame, v_data: pd.DataFrame, ws_data: pd.DataFrame, time_step=24):
     # 合并 u 和 v 数据
     # u_data :(25,613),
     # ws_data:(72,732)
@@ -391,20 +391,35 @@ def train_data_preparation(u_data: pd.DataFrame, v_data: pd.DataFrame, ws_data: 
     features = pd.concat([u_data, v_data], axis=1)
 
     # TODO:[*] 25-04-29 此处的意义是什么?
+    """
+        StandardScaler 是 scikit-learn 库中的一个类，用于标准化特征。它通过将每个特征的值减去该特征的均值，然后除以该特征的标准差来实现标准化。标准化后的特征将具有均值为 0 和标准差为 1。
+        features 是一个形状为 (25, 1464) 的数组，表示有 25 个样本和 1464 个特征。
+        features_scaled 将包含标准化后的数据，形状仍然是 (25, 1464)，但每个特征的分布将变为均值为 0 和标准差为 1。
+    """
     # 标准化
     scaler = StandardScaler()
     # shape:(25, 1464)
     features_scaled = scaler.fit_transform(features)
+    """归一化后的合并后(features)的特征值数据集"""
 
     # 创建时间序列数据
     def create_dataset(features, targets, time_step=1):
         X, y = [], []
+        # len(features) = 25 ，相当于是行数
+        # 此处的 time_step 应修改为1，时间不长为1hour？
+        # TODO:[*] 25-05-05 ERROR:
+        if len(features) <= time_step:
+            raise ValueError("features 的长度必须大于 time_step")
         for i in range(len(features) - time_step):
+            # 若 ts=24的话, features[0:24, :]
+            # shape (24, 1464)
             X.append(features[i:(i + time_step), :])
+            # 若 ts=24的话，targets[0+24]
             y.append(targets[i + time_step])
         return np.array(X), np.array(y)
 
-    time_step = 25  # 例如，使用过去25小时的数据
+    # TODO:[*] 25-05-05 此处的时间步长是否有问题？
+    # time_step = 24  # 例如，使用过去25小时的数据
 
     """
         X 是一个三维数组，形状为 (样本数, 时间步, 特征数)，其中：
@@ -423,20 +438,38 @@ def train_data_preparation(u_data: pd.DataFrame, v_data: pd.DataFrame, ws_data: 
         y 的形状为 (76,)，与 X 的样本数相对应。
     """
     # TODO:[*] 25-04-29 X 与 y的 shape均为0
+    # X shape:(1,24,1464)
+    # y shape:(1,732)
+    # y 若为 1,732 说明是 一年 366*2 两个月报时次，是不对的
     X, y = create_dataset(features_scaled, ws_data.values, time_step)
     return X, y
 
 
 def train_instruct_model(X, y):
-    # 定义模型
+    """
+        构建 LSTM 模型
+    :param X:
+    :param y: 暂未使用
+    :return:
+    """
+    # step1:创建一个顺序模型，这是 Keras 中构建神经网络的一种方式，适合逐层添加网络结构。
     model = Sequential()
+    # step2:添加LSTM层，50个单元
+    # return_sequences=True 表示该层将返回序列数据，以便可以堆叠更多的 LSTM 层。
+    # input_shape 指定输入数据的形状，通常为 (时间步数, 特征数量)。
     # IndexError: tuple index out of range
     model.add(LSTM(units=50, return_sequences=True, input_shape=(X.shape[1], X.shape[2])))
+    # 添加一个 Dropout 层，以防止过拟合。这里的 0.2 表示在训练过程中随机丢弃 20% 的神经元。
     model.add(Dropout(0.2))
+    # 添加另一个 LSTM 层，返回序列的特性不再需要，因此不设置 return_sequences。
     model.add(LSTM(units=50))
+
     model.add(Dropout(0.2))
+    # 添加一个全连接层（Dense），输出一个值，适用于回归任务。
     model.add(Dense(units=1))  # 输出层
     # 编译模型
+    # 使用 Adam 优化器，这是一个常用的优化算法。
+    # 设置损失函数为均方误差（mean squared error），适合回归问题。
     model.compile(optimizer='adam', loss='mean_squared_error')
     return model
 
@@ -444,10 +477,19 @@ def train_instruct_model(X, y):
 def train_fit_model(model, X, y):
     # 拆分数据集为训练集和测试集
     train_size = int(len(X) * 0.8)
+    # 根据计算出的 train_size 将 X 拆分为训练集和测试集。
     X_train, X_test = X[:train_size], X[train_size:]
+    # 将目标变量 y 拆分为训练集和测试集。
     y_train, y_test = y[:train_size], y[train_size:]
     # 训练模型
+    """
+        使用 fit 方法训练模型。
+        epochs=100：训练 100 个周期（epochs）。
+        batch_size=32：每个批次的样本数量为 32。
+        validation_data=(X_test, y_test)：在每个周期结束时使用测试集数据进行验证，这样可以监控模型的性能并防止过拟合。
+    """
     model.fit(X_train, y_train, epochs=100, batch_size=32, validation_data=(X_test, y_test))
+    # 返回训练后的模型，以及测试集的特征和目标变量。这可以用于后续的评估或预测。
     return model, X_test, y_test
 
 
@@ -458,6 +500,13 @@ def train_model_evaluate(model, X_test, y_test):
     # 反标准化（如果需要）
     # predictions = scaler.inverse_transform(predictions)
 
+    # TODO:[*] 25-05-06 此处出错
+    """
+          File 'xx\site-packages\sklearn\utils\validation.py', line 169, in _assert_all_finite_element_wise
+    raise ValueError(msg_err)
+ValueError: Input contains NaN.
+python-BaseException
+    """
     # 评估模型
     mse = mean_squared_error(y_test, predictions)
     print(f'Mean Squared Error: {mse}')
@@ -510,14 +559,26 @@ def main():
 
     # step3: 提取 test 与 training data 开始训练
     # traning_ws(r'G:\05DATA\01TRAINING_DATA\WIND\merge.csv', r'G:\05DATA\01TRAINING_DATA\FUB\MF01001\2024_local.csv')
+
+    """shape:(25,732)"""
     df_u, df_v = get_test_array(r'G:\05DATA\01TRAINING_DATA\WIND\merge.csv',
                                 r'G:\05DATA\01TRAINING_DATA\FUB\MF01001\2024_local.csv', issue_times_index)
+
     read_file_full_path: str = r'G:\05DATA\01TRAINING_DATA\FUB\MF01001\2024_local.csv'
     # step1: 生成一年的 365*2 =730 个 ws,ybg -> 只取 ws
     df_ws = batch_get_realdata(read_file_full_path)
+    """shape:(72,732)"""
+
+    # TODO:[-] 25-05-05 注意: 此处通过 df_u.loc[:,0]的方式取出第一列;方式2：取出第一列对应的列名 df_u.columns[0]
+    # eg 第一列: 2024-01-01 00:00:00
+    # 取出第一列的列向量
+
     # step2: 只提取 ws
     # df_ws.to_csv(out_put_file_path)
-    X, y = train_data_preparation(df_u, df_v, df_ws)
+    # TODO:[*] 25-05-05
+    # 此处将 时间步长修改为 1h ，输出的 X shape:(24,1,1464),y shape:(24,732)
+    #
+    X, y = train_data_preparation(df_u, df_v, df_ws, 1)
     model = train_instruct_model(X, y)
     model, X_test, y_test = train_fit_model(model, X, y)
     train_model_evaluate(model, X_test, y_test)
