@@ -388,7 +388,12 @@ def train_data_preparation(u_data: pd.DataFrame, v_data: pd.DataFrame, ws_data: 
     # u 是有缺失的
     # shape:(25,1226)
     # shape:(25, 1464) u|v 单独为 (25,732)
-    features = pd.concat([u_data, v_data], axis=1)
+    # 注意 (n,m) 表示的是 n 行，m列，其中 n 表示样本的数量, m表示特征的数量
+    # (25,732) 即表示 25 行，732 列，需要将 732 表示特征，25 表示样本
+    # TODO:[-] 25-05-07 将 u , v => (25,732,2)
+    # features = pd.concat([u_data, v_data], axis=1)
+    features = np.stack((u_data, v_data), axis=-1)
+    # 合并和可通过 features_scaled[...,0] 查看 u_data
 
     # TODO:[*] 25-04-29 此处的意义是什么?
     """
@@ -396,14 +401,28 @@ def train_data_preparation(u_data: pd.DataFrame, v_data: pd.DataFrame, ws_data: 
         features 是一个形状为 (25, 1464) 的数组，表示有 25 个样本和 1464 个特征。
         features_scaled 将包含标准化后的数据，形状仍然是 (25, 1464)，但每个特征的分布将变为均值为 0 和标准差为 1。
     """
+    # 由于目前为三维矩阵 (25,732,2) 需要转换为二维数组再使用 StandardScaler 进行归一化
+    features_reshaped = features.reshape(-1, 2)
     # 标准化
     scaler = StandardScaler()
     # shape:(25, 1464)
-    features_scaled = scaler.fit_transform(features)
+    features_scaled_reshaped = scaler.fit_transform(features_reshaped)
     """归一化后的合并后(features)的特征值数据集"""
 
+    features_scaled = features_scaled_reshaped.reshape(25, 732, 2)
+
     # 创建时间序列数据
+
     def create_dataset(features, targets, time_step=1):
+        """
+            TODO:[*] 25-05-07 此处修改为按照 (25,732,2) shape 进行创建数据集操作
+            X 的shape：每个样本的形状为 (time_step, 732, 2)，其中 time_step 可以根据您的需求进行调整。
+            y 的shape：每个目标值与 X 中的样本对应，通常是单一值（例如，预测的下一个时间步的值）。
+        :param features:
+        :param targets:
+        :param time_step:
+        :return:
+        """
         X, y = [], []
         # len(features) = 25 ，相当于是行数
         # 此处的 time_step 应修改为1，时间不长为1hour？
@@ -487,6 +506,10 @@ def train_fit_model(model, X, y):
         epochs=100：训练 100 个周期（epochs）。
         batch_size=32：每个批次的样本数量为 32。
         validation_data=(X_test, y_test)：在每个周期结束时使用测试集数据进行验证，这样可以监控模型的性能并防止过拟合。
+        X_train 训练数据的输入特征，通常是一个多维数组或矩阵。每一行代表一个样本，每一列代表一个特征。
+        y_train y_train 是训练数据的目标值，通常是一个一维数组或向量。每个元素对应 X_train 中的样本，表示该样本的期望输出。
+        TODO:[-] 25-05-07
+        
     """
     model.fit(X_train, y_train, epochs=100, batch_size=32, validation_data=(X_test, y_test))
     # 返回训练后的模型，以及测试集的特征和目标变量。这可以用于后续的评估或预测。
@@ -502,10 +525,8 @@ def train_model_evaluate(model, X_test, y_test):
 
     # TODO:[*] 25-05-06 此处出错
     """
-          File 'xx\site-packages\sklearn\utils\validation.py', line 169, in _assert_all_finite_element_wise
-    raise ValueError(msg_err)
-ValueError: Input contains NaN.
-python-BaseException
+          ValueError: Input contains NaN.
+            python-BaseException
     """
     # 评估模型
     mse = mean_squared_error(y_test, predictions)
@@ -578,7 +599,7 @@ def main():
     # TODO:[*] 25-05-05
     # 此处将 时间步长修改为 1h ，输出的 X shape:(24,1,1464),y shape:(24,732)
     #
-    X, y = train_data_preparation(df_u, df_v, df_ws, 1)
+    X, y = train_data_preparation(df_u, df_v, df_ws, 24)
     model = train_instruct_model(X, y)
     model, X_test, y_test = train_fit_model(model, X, y)
     train_model_evaluate(model, X_test, y_test)
