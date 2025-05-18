@@ -21,7 +21,7 @@ import datetime
 
 # 先从海浪数据中提取出经纬度，时间，风，海浪高度
 # 解析单个文件，并存于字典内
-from sklearn.preprocessing import StandardScaler
+from sklearn.preprocessing import StandardScaler, MinMaxScaler
 
 from util import rmse
 
@@ -357,6 +357,24 @@ def main():
         df_ws_subset.T-> y shape:(732, 25, 1)
     """
 
+    # ============================
+    # 归一化步骤
+    # ============================
+    # 拍扁数据为二维数组（n*timesteps, feature）进行归一化
+    X_flat = X.reshape(-1, 1)
+    y_flat = y.reshape(-1, 1)
+
+    # 分别为 X 和 y 定义归一化器（当然如果两者量纲一致，可用同一个 scaler）
+    scaler_X = MinMaxScaler(feature_range=(0, 1))
+    scaler_y = MinMaxScaler(feature_range=(0, 1))
+
+    X_scaled = scaler_X.fit_transform(X_flat)
+    y_scaled = scaler_y.fit_transform(y_flat)
+
+    # 将归一化后的二维数据恢复为原来的3D形状
+    X = X_scaled.reshape(X.shape)
+    y = y_scaled.reshape(y.shape)
+
     # 设置时间步长为 25
     n_timesteps = 24
     # 25 相当于样本数也是25
@@ -404,13 +422,40 @@ def main():
     model.compile(optimizer='adam', loss=rmse)
 
     # 训练模型
-    model.fit(X_train, y_train, epochs=100, batch_size=16, validation_data=(X_test, y_test))
+    model.fit(X_train, y_train, epochs=10, batch_size=16, validation_data=(X_test, y_test))
 
     # step5: 模型预测
     # 进行预测
     predictions = model.predict(X_test)
     # 输出预测结果的形状
     print("Predictions shape:", predictions.shape)  # 应为 (147, 25)
+
+    # 如果 Dense 层输出二维数据（形如 (n_samples, 25)），则增加一个维度以方便后续反归一化
+    if predictions.ndim == 2:
+        predictions = np.expand_dims(predictions, axis=-1)
+    if y_test.ndim == 2:
+        y_test = np.expand_dims(y_test, axis=-1)
+
+    # ============================
+    # 反归一化
+    # ============================
+    # 将预测结果与对应标签拍扁为二维数组，方便调用 scaler.inverse_transform
+    pred_flat = predictions.reshape(-1, 1)
+    y_test_flat = y_test.reshape(-1, 1)
+
+    # 用 scaler_y 将归一化数值恢复到原始尺度
+    pred_inv = scaler_y.inverse_transform(pred_flat)
+    y_test_inv = scaler_y.inverse_transform(y_test_flat)
+
+    # 恢复反归一化后的形状与 original predictions 保持一致
+    pred_inv = pred_inv.reshape(predictions.shape)
+    y_test_inv = y_test_inv.reshape(y_test.shape)
+
+    # ============================
+    # 计算均方误差 (MSE)
+    # ============================
+    mse_value = mean_squared_error(y_test_inv.flatten(), pred_inv.flatten())
+    print(f'Test MSE: {mse_value}')
 
     # 评估模型
     loss = model.evaluate(X_test, y_test)
@@ -429,6 +474,228 @@ def main():
     # plt.legend()
     # plt.show()
     pass
+
+
+def main_250515():
+    """
+        25-05-11
+    :return:
+    """
+    read_path: str = r'Z:\WIND\GRAPES\2024'
+    out_put_path: str = r'./data'
+    out_put_file_path: str = str(pathlib.Path(out_put_path) / 'GRAPES_2024_24')
+    lat: float = 39.5003
+    lng: float = 120.59533
+
+    # TODO:[*] 25-04-29 根据起止时间，时间步长为12h，生成发布时间index
+    start_time = '2024-01-01 00:00:00'
+    end_time = '2024-12-31 23:00:00'
+    issue_times_index = pd.date_range(start=start_time, end=end_time, freq='12h')
+
+    # step1: 提取数据集
+    df_u, df_v = get_test_array(r'G:\05DATA\01TRAINING_DATA\WIND\merge.csv',
+                                r'G:\05DATA\01TRAINING_DATA\FUB\MF01001\2024_local.csv', issue_times_index)
+
+    read_file_full_path: str = r'G:\05DATA\01TRAINING_DATA\FUB\MF01001\2024_local.csv'
+    #  生成一年的 365*2 =730 个 ws,ybg -> 只取 ws
+    # 注意实况 shape : (72,732)
+    df_ws = batch_get_realdata(read_file_full_path)
+    """shape:(72,732)"""
+
+    df_ws_subset = df_ws.iloc[:25, :]
+
+    # TODO:[-] 25-05-08 将 u+v获得 ws的风速的值
+    df_ws_forecast = np.sqrt(df_u ** 2 + df_v ** 2)
+    """风场的风速绝对值"""
+
+    # shape :(25,732)
+    df_ws_forecast = pd.DataFrame(df_ws_forecast)
+
+    print(f'df_ws_forecast shape:{df_ws_forecast.shape}')
+    print(f'df_ws_subset shape:{df_ws_subset.shape}')
+    """
+        df_ws_forecast shape:(25, 732)
+        df_ws_subset shape:(25, 732)
+    """
+
+    # TODO:[*] 25-05-11 由于数据可能存在空置（大概40个预报时次，20天没有预报数据)
+    # 删除 df_ws_forecast 中的空值，并获取有效索引
+    # axis=1 按列检索，若列中存在nan则删除该列
+    valid_columns = df_ws_forecast.dropna(axis=1).columns
+
+    # 使用有效索引筛选 df_ws_forecast 和 df_ws_subset
+    df_ws_forecast_cleaned = df_ws_forecast[valid_columns]
+    df_ws_subset_cleaned = df_ws_subset[valid_columns]
+    print(f'df_ws_forecast_cleaned shape:{df_ws_forecast_cleaned.shape}')
+    print(f'df_ws_subset_cleaned shape:{df_ws_subset_cleaned.shape}')
+    print(f'df_ws_forecast_cleaned中包含 NaN 的行数:{df_ws_forecast_cleaned.isnull().any(axis=0).sum()}')
+    print(f'df_ws_subset_cleaned NaN 的行数:{df_ws_subset_cleaned.isnull().any(axis=0).sum()}')
+    print('# ————————————————————————————————————————————')
+    # ————————————————————————————————————————————
+
+    # 使用线性插值填充 NaN 值
+    df_interpolated = df_ws_subset_cleaned.interpolate(method='linear')
+    print(f'df_interpolated中包含 NaN 的行数:{df_interpolated.isnull().any(axis=0).sum()}')
+    print('# ————————————————————————————————————————————')
+    # 由于实况数据中也可能包含nan，需要找到实况数据中的nan的行，并双向删除
+    # TODO:[-] 25-05-11
+    # axis=0 ，表示按行进行操作 ; axis=1，表示按列进行操作 .
+    valid_realdata_columns = df_interpolated.dropna(axis=1).columns
+    df_ws_forecast_cleaned = df_ws_forecast[valid_realdata_columns]
+    df_ws_subset_cleaned = df_interpolated[valid_realdata_columns]
+    print(f'df_ws_forecast_cleaned shape:{df_ws_forecast_cleaned.shape}')
+    print(f'df_ws_subset_cleaned shape:{df_ws_subset_cleaned.shape}')
+    print(f'df_ws_forecast_cleaned中包含 NaN 的行数:{df_ws_forecast_cleaned.isnull().any(axis=0).sum()}')
+    print(f'df_ws_subset_cleaned NaN 的行数:{df_ws_subset_cleaned.isnull().any(axis=0).sum()}')
+    print('# ————————————————————————————————————————————')
+    """
+        df_ws_forecast_cleaned shape:(25, 612)
+        df_ws_subset_cleaned shape:(25, 612)
+    """
+    # ————————————————————————————————————————————
+
+    # step2: 数据格式化
+    # 将 DataFrame 转换为 NumPy 数组
+    X = []
+    y = []
+
+    # 再次检查清理后的df是否还存在空值
+    # 检查 df_ws_forecast 是否有缺失值
+    # cleaned_forecast = df_ws_forecast_cleaned.isnull().sum()
+    # cleaned_realdata = df_ws_subset_cleaned.isnull().sum()
+    # print("Missing values in df_ws_forecast_cleaned:\n", cleaned_forecast)
+    # print("Missing values in df_ws_subset_cleaned:\n", cleaned_realdata)
+
+    rows: int = df_ws_forecast_cleaned.shape[0]
+    cols: int = df_ws_forecast_cleaned.shape[1]
+
+    X_data_raw = df_ws_forecast_cleaned.values.T
+    y_data_raw = df_ws_subset_cleaned.values.T
+
+    # 如果尚未完成，请确保正确的重塑 (样本数, 时间步数)
+    # 假设 df.values.T 得到 (样本数, 时间步数)
+    X = X_data_raw.reshape(cols, rows, 1)
+    y = y_data_raw.reshape(cols, rows, 1)
+
+    if np.isnan(X).any() or np.isnan(y).any():
+        print("数据中存在 NaN 值，请处理。")
+        # 在继续之前处理NaN，例如通过插值或移除
+        # 在此示例中，我们假设NaN已处理或将引发错误
+        raise ValueError("数据中发现NaN值。请进行预处理。")
+
+    print(f'X 初始形状: {X.shape}')
+    print(f'y 初始形状: {y.shape}')
+
+    # 根据数据校正 n_timesteps
+    n_timesteps_data = X.shape[1]  # 根据您的形状，这应该是 25
+    n_features_data = X.shape[2]  # 这应该是 1
+
+    # --- 数据缩放 (归一化) ---
+    # X 数据的缩放器
+    scaler_X = MinMaxScaler(feature_range=(0, 1))
+    # 将 X 重塑为2D以适应缩放器: (样本数 * 时间步数, 特征数)
+    X_reshaped = X.reshape(-1, n_features_data)
+    scaler_X.fit(X_reshaped)  # 如果X是纯输入，为了保持一致性，在所有X数据上拟合
+    # 注意：严格来说，对于训练/测试集划分，仅在X的训练部分拟合。
+    # 然而，如果X是一个外部预测，其尺度独立于y的尺度，
+    # 那么在所有X上拟合是可以的。对于从训练数据派生的特征，则仅在训练集上拟合。
+    # 为简单起见，这里假设X是一个独立的输入。
+    X_scaled_reshaped = scaler_X.transform(X_reshaped)
+    X_scaled = X_scaled_reshaped.reshape(X.shape)
+
+    # y 数据 (目标值) 的缩放器
+    scaler_y = MinMaxScaler(feature_range=(0, 1))
+    # 将 y 重塑为2D以适应缩放器: (样本数 * 时间步数, 特征数)
+    y_reshaped = y.reshape(-1, n_features_data)
+    # 我们将在划分数据后，仅在 y 的训练部分拟合 scaler_y
+    # y_scaled_reshaped = scaler_y.transform(y_reshaped) # 先不要转换所有的 y
+    # y_scaled = y_scaled_reshaped.reshape(y.shape) # 先不要转换所有的 y
+
+    # --- 数据划分 ---
+    # 重要提示：对于时间序列，请使用 shuffle=False 或手动切片。
+    # 使用 shuffle=True (默认值) 对于时序数据通常是不正确的。
+    X_train, X_test, y_train_orig, y_test_orig = train_test_split(
+        X_scaled, y, test_size=0.2, random_state=42, shuffle=False  # 将 shuffle 改为 False
+    )
+
+    # 在 y_train_orig 上拟合 scaler_y，并转换 y_train_orig 和 y_test_orig
+    y_train_reshaped_for_scaler = y_train_orig.reshape(-1, n_features_data)
+    scaler_y.fit(y_train_reshaped_for_scaler)
+
+    y_train_scaled_reshaped = scaler_y.transform(y_train_reshaped_for_scaler)
+    y_train_scaled = y_train_scaled_reshaped.reshape(y_train_orig.shape)
+
+    y_test_scaled_reshaped = scaler_y.transform(y_test_orig.reshape(-1, n_features_data))
+    y_test_scaled = y_test_scaled_reshaped.reshape(y_test_orig.shape)
+
+    # 如果模型输出 (None, 25)，则调整 y_train_scaled 和 y_test_scaled
+    # 模型的训练目标应与其输出形状匹配。
+    # 如果模型输出 (None, n_timesteps_data)，则 y 需要是 (None, n_timesteps_data)
+    y_train_fit = y_train_scaled.squeeze(axis=-1)
+    y_test_fit = y_test_scaled.squeeze(axis=-1)
+
+    print(f'X_train 形状: {X_train.shape}')
+    print(f'X_test 形状: {X_test.shape}')
+    print(f'y_train_fit 形状 (用于模型): {y_train_fit.shape}')
+    print(f'y_test_fit 形状 (用于模型): {y_test_fit.shape}')
+    print(f'y_train_orig 形状: {y_train_orig.shape}')  # 原始y_train，用于反归一化参考
+    print(f'y_test_orig 形状: {y_test_orig.shape}')  # 原始y_test，用于最终MSE计算
+
+    # --- 创建 LSTM 模型 ---
+    # 模型调整为输出 (None, n_timesteps_data) 例如 (None, 25)
+    model = Sequential()
+    model.add(Bidirectional(LSTM(units=128, return_sequences=True,
+                                 activation='relu',  # tanh 也很常用
+                                 input_shape=(n_timesteps_data, n_features_data))))
+    model.add(Dropout(0.2))
+    # 第二个 BiLSTM 设置 return_sequences=False 以输出 (None, units*2)
+    model.add(Bidirectional(LSTM(units=64, return_sequences=False, activation='relu')))
+    model.add(Dropout(0.2))
+    # Dense 层得到 (None, n_timesteps_data) 的输出
+    model.add(Dense(n_timesteps_data))  # 输出 25 个值
+
+    # 编译模型
+    model.compile(optimizer='adam', loss=rmse)  # 使用您自定义的/Keras的rmse
+    model.summary()
+
+    # 训练模型
+    history = model.fit(X_train, y_train_fit,
+                        epochs=5,  # 测试时可考虑减少轮数，或使用 EarlyStopping
+                        batch_size=16,
+                        validation_data=(X_test, y_test_fit),
+                        verbose=1)
+
+    # --- 模型预测 ---
+    predictions_scaled = model.predict(X_test)
+    print("predictions_scaled (缩放后的预测) 形状:", predictions_scaled.shape)  # 应该是 (147, 25)
+
+    # --- 对预测结果进行反归一化 ---
+    # predictions_scaled 是 (测试样本数, 时间步数) 例如 (147, 25)
+    # scaler_y 是在形状为 (-1, 特征数) 例如 (-1, 1) 的数据上拟合的
+    # 我们需要重塑 predictions_scaled 以便与 inverse_transform 兼容
+    predictions_scaled_for_inverse = predictions_scaled.reshape(-1, n_features_data)
+    predictions_inverted_flat = scaler_y.inverse_transform(predictions_scaled_for_inverse)
+    # 重塑回 (测试样本数, 时间步数)
+    predictions_final = predictions_inverted_flat.reshape(predictions_scaled.shape)
+    print("predictions_final (反归一化后的预测) 形状:", predictions_final.shape)
+
+    # --- 在原始尺度上用 MSE 评估模型 ---
+    # y_test_orig 是 (测试样本数, 时间步数, 特征数)，例如 (147, 25, 1)
+    # predictions_final 是 (测试样本数, 时间步数)，例如 (147, 25)
+    # 我们需要公平地比较它们。压缩 y_test_orig 的最后一个维度。
+    y_test_orig_squeezed = y_test_orig.squeeze(axis=-1)
+
+    # 计算所有预测点的 MSE
+    mse = mean_squared_error(y_test_orig_squeezed.flatten(), predictions_final.flatten())
+    print(f'测试集 MSE (在原始尺度上): {mse}')
+
+    # model.evaluate 报告的损失是在缩放数据上使用 'rmse' 指标计算的
+    loss_on_scaled_data = model.evaluate(X_test, y_test_fit, verbose=0)
+    print(f'测试集损失 (在缩放数据上的 RMSE，与 model.compile 一致): {loss_on_scaled_data}')
+
+    # 如果需要，计算每个样本的 MSE
+    # mse_per_sample = np.mean((y_test_orig_squeezed - predictions_final)**2, axis=1)
+    # print(f'每个样本的平均 MSE (在原始尺度上): {np.mean(mse_per_sample)}')
 
 
 if __name__ == '__main__':
