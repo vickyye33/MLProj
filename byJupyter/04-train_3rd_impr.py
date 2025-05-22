@@ -22,7 +22,8 @@ import datetime
 # 先从海浪数据中提取出经纬度，时间，风，海浪高度
 # 解析单个文件，并存于字典内
 from sklearn.preprocessing import StandardScaler
-from tensorflow.keras.callbacks import EarlyStopping, ReduceLROnPlateau
+from keras.callbacks import EarlyStopping, ModelCheckpoint
+# from tensorflow.keras.callbacks import EarlyStopping, ReduceLROnPlateau
 from sklearn.preprocessing import MinMaxScaler
 
 
@@ -157,9 +158,18 @@ def model_fit():
     end_time = '2024-12-31 23:00:00'
     issue_times_index = pd.date_range(start=start_time, end=end_time, freq='12h')
     # step1: 提取数据集
-    df_u, df_v = get_test_array(r'G:\05DATA\01TRAINING_DATA\WIND\merge.csv',
-                                r'G:\05DATA\01TRAINING_DATA\FUB\MF01001\2024_local.csv', issue_times_index)
-    read_file_full_path: str = r'G:\05DATA\01TRAINING_DATA\FUB\MF01001\2024_local.csv'
+    # mac nas 地址
+    test_read_path: str = r'/Volumes/DATA/01TRAINNING_DATA/WIND/merge.csv'
+    train_read_path: str = r'/Volumes/DATA/FUB/MF01001/2024_local.csv'
+    read_file_full_path: str = r'/Volumes/DATA/FUB/MF01001/2024_local.csv'
+
+    # win nas 地址
+    # read_file_full_path: str = r'G:\05DATA\01TRAINING_DATA\FUB\MF01001\2024_local.csv'
+    # test_read_path: str = r'G:\05DATA\01TRAINING_DATA\WIND\merge.csv'
+    # train_read_path: str = r'G:\05DATA\01TRAINING_DATA\FUB\MF01001\2024_local.csv'
+    df_u, df_v = get_test_array(test_read_path,
+                                train_read_path, issue_times_index)
+
     #  生成一年的 365*2 =730 个 ws,ybg -> 只取 ws
     # 注意实况 shape : (72,732)
     df_ws = batch_get_realdata(read_file_full_path)

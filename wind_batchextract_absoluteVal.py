@@ -23,7 +23,7 @@ import datetime
 # 解析单个文件，并存于字典内
 from sklearn.preprocessing import StandardScaler, MinMaxScaler
 
-from util import rmse
+from utils import rmse
 
 
 def batch_get_realdata(file_full_path: str, split_hours=72, issue_hours_steps: int = 12) -> pd.DataFrame:
