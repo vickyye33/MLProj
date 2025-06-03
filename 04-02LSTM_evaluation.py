@@ -1,3 +1,5 @@
+from typing import Any
+
 import arrow
 import numpy as np
 import pandas as pd
@@ -7,6 +9,7 @@ from keras import Sequential
 # from keras.src.layers import LSTM, Dropout, Bidirectional, Dense, Masking
 from keras.layers import LSTM, Dropout, Bidirectional, Dense, Masking
 from pandas import DatetimeIndex
+from keras.models import load_model
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import mean_squared_error
 # from tensorflow.keras.losses import MeanSquaredError
@@ -24,22 +27,21 @@ import datetime
 from sklearn.preprocessing import StandardScaler, MinMaxScaler
 
 
-# from utils import rmse
+def load_customer_model(model_path: str) -> Any:
+    if pathlib.Path(model_path).exists():
+        loaded_model = load_model(model_path)
+        """加载后的模型"""
+        print(loaded_model.summary())
+        return loaded_model
+    return None
 
 
-def to_do():
-    """
+def main():
+    model_path: str = r'G:\05DATA\02MODELS\fit_model_250603.h5'
+    loaded_model = load_customer_model(model_path)
 
-    :return:
-    """
-    # vals
-    # mac
-    # forecast_path: str = r'/Volumes/DATA/01TRAINNING_DATA/WIND/01/df_ws_forecast.csv'
-    # realdata_path: str = r'/Volumes/DATA/FUB/MF01001/2024_local_df_utc_filter.csv'
-    # win
     forecast_path: str = r'Z:\01TRAINNING_DATA\standard\df_ws_forecast.csv'
     realdata_path: str = r'Z:\01TRAINNING_DATA\standard\2024_local_df_utc_filter.csv'
-    model_path: str = r'G:\05DATA\02MODELS\fit_model_250603.h5'
 
     # step1: 加载标准化后的 预报 | 实况 数据集
     df_forecast = pd.read_csv(forecast_path, encoding='utf-8', index_col=0)
@@ -88,49 +90,25 @@ def to_do():
     y_train = np.array(y_train, dtype=np.float32)
     y_test = np.array(y_test, dtype=np.float32)
 
-    # step4: 构建模型
-    model = Sequential()
+    # step4: 模型预测
     X_train = np.nan_to_num(X_train, nan=0.0)
     X_test = np.nan_to_num(X_test, nan=0.0)
     y_train = np.nan_to_num(y_train, nan=0.0)
     y_test = np.nan_to_num(y_test, nan=0.0)
-    """
-        错误原因:
-            你在 Masking 层中设置了 input_shape=(25, 1)，这表示你期望输入数据的每个样本有 25 个时间步，每个时间步有 1 个特征。
-            然而，错误信息 found shape=(None, 72, 1) 清楚地表明，你的实际输入数据 X_train 和 X_test 的每个样本有 72 个时间步，而不是 25 个。
 
-    """
-    model.add(Masking(mask_value=0.0, input_shape=(72, 1)))
-    model.add(Bidirectional(LSTM(units=128, return_sequences=True,
-                                 activation='relu',
-                                 input_shape=(25, 1))))  # units是LSTM神经元数量, return_sequences=True 因为我们要在每个时间步都输出
-    model.add(Dropout(0.2))
-    model.add(Bidirectional(LSTM(units=64, return_sequences=True, activation='relu')))  # 可以堆叠多个LSTM层
-    model.add(Dropout(0.2))
-    model.add(Dense(25))
+    # 注意由于 model.add(Dense(25)) 加入了全连接层，最后一步对每个时间输出25维结果，所以暂时取出第一个维度的数据
+    y_pred = loaded_model.predict(X_test)
+    y_pred = y_pred[:, :, 0]
 
-    # 编译模型
-    # TODO:[-] 25-05-14 此处损失函数使用 RMSE——均方根误差
-    # 将均方误差修改为均方根误差后
-
-    model.compile(optimizer='adam', loss='mse')
-
-    # 训练模型
-    # ERROR:
-    # TypeError: Cannot interpret 'tf.float32' as a data type
-    # Epoch 1/10
-    # 2025-05-29 20:13:55.381747: I tensorflow/core/grappler/optimizers/custom_graph_optimizer_registry.cc:117] Plugin optimizer for device_type GPU is enabled.
-    #  2/37 ━━━━━━━━━━━━━━━━━━━━ 8:18 14s/step - loss: nan
-    model.fit(X_train, y_train, epochs=10, batch_size=16, validation_data=(X_test, y_test))
-    model.save(model_path)
-
+    # 反归一化
+    # ERROR: ValueError: Found array with dim 3. None expected <= 2.
+    y_pred_real = scaler_y.inverse_transform(y_pred)
+    y_test = y_test[:, :, 0]
+    y_test_real = scaler_y.inverse_transform(y_test)
+    rmse_real = np.sqrt(mean_squared_error(y_test_real, y_pred_real))
+    # 真实数据上的 RMSE: 4.6269
+    print(f'真实数据上的 RMSE: {rmse_real:.4f}')
     pass
-
-    pass
-
-
-def main():
-    to_do()
 
 
 if __name__ == '__main__':
