@@ -37,9 +37,14 @@ def to_do():
     # forecast_path: str = r'/Volumes/DATA/01TRAINNING_DATA/WIND/01/df_ws_forecast.csv'
     # realdata_path: str = r'/Volumes/DATA/FUB/MF01001/2024_local_df_utc_filter.csv'
     # win
+    # forecast_path: str = r'Z:\01TRAINNING_DATA\standard\df_ws_forecast.csv'
+    # realdata_path: str = r'Z:\01TRAINNING_DATA\standard\2024_local_df_utc_filter.csv'
+    # model_path: str = r'G:\05DATA\02MODELS\fit_model_250603.h5'
+    # razer
+    # TODO:[-] 25-06-08 新加入的razer配置
     forecast_path: str = r'Z:\01TRAINNING_DATA\standard\df_ws_forecast.csv'
     realdata_path: str = r'Z:\01TRAINNING_DATA\standard\2024_local_df_utc_filter.csv'
-    model_path: str = r'G:\05DATA\02MODELS\fit_model_250603.h5'
+    model_path: str = r'E:\05DATA\02MODELS\fit_model_250603.h5'
 
     # step1: 加载标准化后的 预报 | 实况 数据集
     df_forecast = pd.read_csv(forecast_path, encoding='utf-8', index_col=0)
