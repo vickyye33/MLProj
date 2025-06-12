@@ -45,7 +45,7 @@ def to_do():
     # TODO:[-] 25-06-08 新加入的razer配置
     forecast_path: str = r'Z:\SOURCE_MERGE_DATA\df_ws_forecast.csv'
     realdata_path: str = r'Z:\SOURCE_MERGE_DATA\2024_local_df_utc_183_split.csv'
-    model_path: str = r'E:\05DATA\fit_model_v2_250609.h5'
+    model_path: str = r'E:\05DATA\fit_model_v2_250612.h5'
     scaler_forecast: str = r'Z:\01TRAINNING_DATA\scaler\scaler_forecast_250609.sav'
     scaler_realdata: str = r'Z:\01TRAINNING_DATA\scaler\scaler_realdata_250609.sav'
 
@@ -116,27 +116,48 @@ def to_do():
             TODO:[-] 25-06-0 此处做了修改由于数据为 (61,732) 故 72 => 61
 
     """
+    # 模型构建的步骤:
+    # step1: 添加一个 Masking 层，指定输入中值为 0.0 的时刻将被“屏蔽”，即这些时间步不会对后续层产生影响。
+    # TODO:[-] 25-06-12 屏蔽是会去掉该时刻的所有数据吗？
     model.add(Masking(mask_value=0.0, input_shape=(61, 1)))
-    model.add(Bidirectional(LSTM(units=128, return_sequences=True,
-                                 activation='relu',
-                                 input_shape=(25, 1))))  # units是LSTM神经元数量, return_sequences=True 因为我们要在每个时间步都输出
+    # step2: 添加双向LSTM层
+    # 双向 LSTM 同时从前向和后向处理时序数据，从而捕获更多上下文信息，提升特征提取能力。
+    # units=128：LSTM 层中每个方向上有 128 个神经元。
+    # return_sequences=True：输出每个时间步的结果，而非仅仅输出最后时刻的状态，这样可以将整个序列的信息传递到下一层。
+    # activation='relu'：将激活函数设置为 ReLU（而非 LSTM 默认的 tanh），可能有助于缓解梯度消失问题，不过这取决于具体任务。
+    # 注意：虽然此处指定了 input_shape=(25, 1)，但实际上在 Sequential 模型中第一层已经指定了输入形状，所以这里的 input_shape 参数可能是不必要或引起混淆（建议保持与 Masking 层一致，即 (61, 1)）。
+    # v1 激活函数:relu
+    # v2 改为: tanh
+    model.add(Bidirectional(LSTM(units=256, return_sequences=True,
+                                 activation='tanh',
+                                 input_shape=(61, 1))))
+    # step3: 添加 Dropout 层，在训练时随机将 20% 的神经元输出设为 0。
+    # Dropout 是一种正则化方法，有助于防止模型过拟合；通过随机丢弃部分神经元，模型不能过分依赖局部特征，从而提高泛化能力。
     model.add(Dropout(0.2))
-    model.add(Bidirectional(LSTM(units=64, return_sequences=True, activation='relu')))  # 可以堆叠多个LSTM层
+    model.add(Bidirectional(LSTM(units=128, return_sequences=True, activation='tanh')))  # 可以堆叠多个LSTM层
+    # step5: 再次添加一个 Dropout 层，使得第二层 LSTM 的输出在训练时有 20% 被随机置零，从而进一步防止过拟合。
     model.add(Dropout(0.2))
-    model.add(Dense(25))
+    # step4: 第二层双向LSTM层
+    model.add(Bidirectional(LSTM(units=64, return_sequences=True, activation='tanh')))  # 可以堆叠多个LSTM层
+    # step5: 再次添加一个 Dropout 层，使得第二层 LSTM 的输出在训练时有 20% 被随机置零，从而进一步防止过拟合。
+    model.add(Dropout(0.2))
+    # step6: 添加全连接层（Dense 层），输出节点数为 25。25-06-12 此处修改为 61 ，需要预测长度为61的时间向量
+    # Dense 层将前面的时序特征映射到目标空间。在时序网络中，当上层返回整个序列（形状为 [batch_size, time_steps, features]）时，Dense 层会被逐时步地应用，输出每个时间步对应一个长度为 25 的向量。这通常用于预测任务，比如多步预测或者每个时刻有多个目标值的任务。
+    model.add(Dense(61))
 
-    # 编译模型
-    # TODO:[-] 25-05-14 此处损失函数使用 RMSE——均方根误差
     # 将均方误差修改为均方根误差后
-
+    # step7: 编译模型
+    # optimizer='adam' 使用 Adam 优化器进行梯度下降更新。Adam 优化器能够自适应调整各参数的学习率，通常能较快收敛，并且对超参数设定不太敏感，不同于传统的 SGD。
+    # TODO:[*] 25-06-12 什么是超参数？
+    # loss='mse' 将损失函数设为均方误差（Mean Squared Error），这是回归问题常用的误差度量指标，模型训练的目标就是尽可能使预测值与真实值之间的均方误差最小化。
+    # 整体作用 model.compile() 会对模型进行配置，指定训练时用哪个优化器、用哪个损失函数，如果需要，还可以添加额外的评估指标。编译过程会为模型建立必要的计算图，并对参数进行初始化。
     model.compile(optimizer='adam', loss='mse')
 
-    # 训练模型
-    # ERROR:
-    # TypeError: Cannot interpret 'tf.float32' as a data type
-    # Epoch 1/10
-    # 2025-05-29 20:13:55.381747: I tensorflow/core/grappler/optimizers/custom_graph_optimizer_registry.cc:117] Plugin optimizer for device_type GPU is enabled.
-    #  2/37 ━━━━━━━━━━━━━━━━━━━━ 8:18 14s/step - loss: nan
+    # step8: 训练模型
+    # X_train, y_train 分别为训练数据和对应目标值。模型将以这些数据为依据不断调整参数，使预测值与真实目标值之间的 MSE 最小化。
+    # epochs=10 指定训练过程需要遍历整个训练集 10 次。每个 epoch 内部数据会根据 batch 大小分批更新参数。
+    # batch_size=16 每个训练步骤（step）使用 16 个样本进行梯度计算和模型更新。较小的 batch size 有助于捕捉更多细微变化，但训练时间可能更长；较大的 batch size 则计算稳定但可能导致泛化性下降。
+    # validation_data=(X_test, y_test) 在每个 epoch 结束后，模型也会评估一次在验证集上的损失。这有助于监控过拟合情况以及训练过程的稳定性。
     model.fit(X_train, y_train, epochs=10, batch_size=16, validation_data=(X_test, y_test))
     model.save(model_path)
 
